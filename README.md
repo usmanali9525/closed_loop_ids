@@ -1,0 +1,128 @@
+# Closed-loop IDS: re-implementation and label-poisoning study
+
+Code for the paper extending Al Ghamdi et al., *"A lightweight closed-loop adaptive intrusion
+detection framework for cyber resilience in critical infrastructure"*, Scientific Reports (2026),
+doi:10.1038/s41598-026-73374-1.
+
+It does three things:
+
+1. **Re-implements** the paper's confirmatory SWaT protocol: 40 temporal blocks,
+   5×5 StratifiedGroupKFold (seeds 42–46), the closed-loop Logistic Regression system with a
+   256-label budget, the full-minus-one ablation (Exp. 9) and the batch baselines (Exp. 10).
+2. **Improves the detector** (Option 2) with causal temporal features, one-hot actuator states,
+   validation-tuned thresholds and k-of-n alarm persistence.
+3. **Runs the poisoning study** (Option 1): random label errors, missed attacks and targeted
+   poisoning of analyst labels, against three defences (filter, clip, rollback) and combinations.
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+mkdir -p data   # put SWaT_Dataset_Attack_v0.csv here
+```
+
+Smoke test without the real data (results are meaningless, it only checks the code runs):
+
+```bash
+python make_synthetic.py
+python run_reproduce.py --attack-csv data/synthetic_swat.csv --reps 1
+python run_poisoning.py --attack-csv data/synthetic_swat.csv --reps 1 --features raw --rates 0.2
+```
+
+## Step 1: check the data
+
+The first lines printed by either script describe the file. The base paper reports
+**449,919 rows, 54,621 attack rows, 51 variables**, and a subset of **39,919 rows / 12,952
+attack rows**. If your copy differs (e.g. a Kaggle re-upload), note it in the paper.
+
+## Step 2: reproduce the base paper
+
+```bash
+python run_reproduce.py --attack-csv data/SWaT_Dataset_Attack_v0.csv
+```
+
+Targets from the paper: full system F1 ≈ 0.75, fixed-threshold LR ≈ 0.57, batch LR ≈ 0.71,
+Extra Trees ≈ 0.71. Expect differences (see assumptions below); report your numbers as
+"our re-implementation".
+
+Outputs in `results/`: per-fold CSV, summary table (mean ± sd [95% CI]) and paired tests
+(Wilcoxon signed-rank and Nadeau–Bengio corrected t-test, both Holm-adjusted).
+
+## Step 3: stronger detector
+
+```bash
+python run_reproduce.py --attack-csv data/SWaT_Dataset_Attack_v0.csv \
+    --features improved --calibrate --persistence 3,5
+```
+
+Add one change at a time (features → calibration → persistence) to attribute each gain.
+
+## Step 4: poisoning study
+
+```bash
+python run_poisoning.py --attack-csv data/SWaT_Dataset_Attack_v0.csv \
+    --features raw improved --rates 0.05 0.1 0.2 0.3 \
+    --defences none filter clip rollback filter+clip
+```
+
+The full grid is about 2,500 runs and takes roughly 15 minutes on a laptop.
+Outputs: `poisoning_summary.csv`, `poisoning_targeted_recall.csv` (recall on the poisoned
+attack segments vs the others) and `poisoning_defence_tests.csv`.
+
+Always report the **"none" corruption row for every defence**: it shows what each defence
+costs when labels are clean.
+
+## Re-implementation assumptions (state these in the Methods section)
+
+The base paper does not report every detail. These are the choices made here:
+
+| # | Item | Choice |
+|---|------|--------|
+| A1 | Block selection | File cut into consecutive 1,000-row blocks; 20 attack-containing and 20 normal-only blocks chosen evenly spaced in time (`--block-selection spread`). `random` and `all` are also available. |
+| A2 | Stream | Warm-up = 256 random events (both classes) from the training fold. The test fold is processed in time order as the stream. |
+| A3 | Labels | 256 per fold in 16 equal scheduled updates, queried from the chunk just processed. Default query strategy: random. Queried events are excluded from evaluation in every configuration so evaluation sets are matched. |
+| A4 | Learner | SGD, log loss, L1, alpha 1e-4. Batch phase: `optimal` learning rate with averaging. Online phase: constant step `eta0 = 0.01`, one pass per update. **eta0 is not reported in the paper.** |
+| A5 | Threshold | Eq. 3 with alpha 0.30, beta 0.20, gamma 0.10, delta 0.20, tau0 0.50, clipped to [0.05, 0.95]. Threat L_t = 0.5 × deviation (no external feed in SWaT). Workload W_t = 0 by default; `--workload pumps` uses the share of running pumps. |
+| A6 | Error feedback | FP and FN rates over the last 200 events using true outcomes (the paper assumes every alert outcome is confirmed). |
+| A7 | Profiler | Welford mean/variance on scaled features; deviation = tanh(mean of |z| clipped at 5); active after 10 observations; label-free baseline updates gated by the 80th percentile of recent deviations (refreshed every 50 events). |
+| A8 | Fixed-threshold LR | Batch-phase model, tau = 0.5, no updates. |
+| A9 | Batch baselines | Trained on the whole training fold, default thresholds (0.5 / 0) unless `--calibrate`. |
+
+**Known difference:** with W_t = 0 and no external threat feed, removing behavioural profiling
+and removing context thresholding have the same effect, because the profiler only acts through
+the threshold. Use `--workload pumps` if you want the two ablations to differ, and say which
+you used.
+
+## Tuning without leaking
+
+`eta0` and `update_epochs` control how much the online model learns from each batch of 16
+labels. With the default `eta0 = 0.01` updates may be very small. Pick them on a **pilot
+subset** that you do not report, e.g.
+
+```bash
+python run_reproduce.py --attack-csv data/SWaT_Dataset_Attack_v0.csv \
+    --block-selection random --block-seed 99 --reps 1 --skip-baselines --eta0 0.05
+```
+
+Try a few values (0.01, 0.05, 0.1; 1–3 epochs), fix one, then run the real experiments.
+Do the same for the defence settings in `online.Defence` (`filter_margin`, `clip_rel`,
+`rollback_tol`).
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `data.py` | SWaT loading, attack segments, temporal blocks, folds |
+| `features.py` | raw and improved feature sets, optional workload proxy |
+| `online.py` | closed-loop system, label corruption, defences |
+| `baselines.py` | batch models, threshold calibration |
+| `evaluation.py` | metrics, persistence, summaries, statistical tests |
+| `run_reproduce.py` | Exp. 9 ablation + Exp. 10 baselines |
+| `run_poisoning.py` | poisoning × defence grid |
+| `make_synthetic.py` | synthetic SWaT-like file for smoke tests |
+
+## Next steps (not yet implemented)
+
+- WADI or HAI loader (Option 3): write a function returning the same `(X, y)` as `load_swat`.
+- Residual features from a model trained on the normal-operation file.
+- Diversity-aware query strategy (Exp. 11 of the base paper).
