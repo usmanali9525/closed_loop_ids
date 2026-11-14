@@ -48,13 +48,33 @@ def _find_col(columns, candidates):
     return None
 
 
-def load_swat(path: str):
-    """Load a SWaT CSV. Handles stray spaces in headers and the 'A ttack' label typo."""
-    df = pd.read_csv(path, low_memory=False)
+def read_table(path: str) -> pd.DataFrame:
+    """Read a SWaT file: .xlsx/.xls, or comma-/tab-separated text in UTF-8 or Latin-1."""
+    if str(path).lower().endswith((".xlsx", ".xls")):
+        read = lambda h: pd.read_excel(path, header=h)
+    else:
+        with open(path, "rb") as fh:
+            head = fh.read(4096)
+        enc = "utf-8"
+        try:
+            head.decode("utf-8")
+        except UnicodeDecodeError:
+            enc = "latin-1"
+        sep = "\t" if b"\t" in head else ","
+        read = lambda h: pd.read_csv(path, sep=sep, header=h, encoding=enc, low_memory=False)
+    df = read(0)
     if _find_col(df.columns, LABEL_CANDIDATES) is None:
-        df = pd.read_csv(path, header=1, low_memory=False)  # some copies have a title row
+        df = read(1)  # some copies have a title row above the header
     df.columns = [str(c).strip() for c in df.columns]
+    return df
 
+
+def load_swat(path: str, return_time: bool = False):
+    """Load a SWaT file. Handles stray spaces in headers and the 'A ttack' label typo.
+
+    Returns (X, y, n_missing), plus the timestamp column if return_time=True.
+    """
+    df = read_table(path)
     label_col = _find_col(df.columns, LABEL_CANDIDATES)
     if label_col is None:
         raise ValueError(f"No label column found. First columns: {list(df.columns)[:8]}")
@@ -72,7 +92,11 @@ def load_swat(path: str):
     n_missing = int(X.isna().sum().sum())
     if n_missing:
         X = X.ffill().bfill()
-    return X.astype(np.float32), y, n_missing
+    X = X.astype(np.float32)
+    if return_time:
+        times = df[time_col].astype(str).str.strip() if time_col else None
+        return X, y, n_missing, times
+    return X, y, n_missing
 
 
 def attack_segments(y: np.ndarray) -> np.ndarray:

@@ -7,8 +7,6 @@ Usage:
 import argparse
 from pathlib import Path
 
-import pandas as pd
-
 from data import attack_segments, load_swat
 
 EXPECTED_ATTACK = {"rows": 449_919, "attack_rows": 54_621, "columns": 51}
@@ -23,12 +21,13 @@ def main():
         if not Path(f).exists():
             print(f"{f}: not found, skipped")
             continue
-        X, y, missing = load_swat(f)
-        t = pd.read_csv(f, usecols=lambda c: c.strip().lower() == "timestamp").iloc[:, 0]
-        print(f"\n{f}")
+        slow = " (Excel: this can take a few minutes)" if f.lower().endswith((".xlsx", ".xls")) else ""
+        print(f"\nReading {f}{slow}...")
+        X, y, missing, t = load_swat(f, return_time=True)
         print(f"  rows: {len(y):,} | attack rows: {int(y.sum()):,} | columns: {X.shape[1]} "
               f"| attack segments: {int(attack_segments(y).max())} | missing values filled: {missing}")
-        print(f"  first timestamp: {str(t.iloc[0]).strip()} | last: {str(t.iloc[-1]).strip()}")
+        if t is not None:
+            print(f"  first timestamp: {t.iloc[0]} | last: {t.iloc[-1]}")
         if "attack" in Path(f).name.lower():
             found = {"rows": len(y), "attack_rows": int(y.sum()), "columns": X.shape[1]}
             for k, v in EXPECTED_ATTACK.items():

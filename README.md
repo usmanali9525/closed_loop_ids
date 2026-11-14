@@ -27,25 +27,38 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+On **Windows (PowerShell)** the same steps are:
+
+```powershell
+cd $HOME\Documents\GitHub\closed_loop_ids
+python -m venv .venv
+.venv\Scripts\Activate.ps1      # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+pip install -r requirements.txt
+```
+
 In VS Code: `Ctrl+Shift+P` → "Python: Select Interpreter" → choose `./.venv`.
 
 ## Data
 
-Put the SWaT files in a `data/` folder in the project:
+Source: the official iTrust **SWaT.A1 & A2 (December 2015)** release.
 
+| File | Use |
+|------|-----|
+| `SWaT_Dataset_Attack_v0` | all experiments (the file used by the base paper) |
+| `SWaT_Dataset_Normal_v1` | normal-operation baseline for later features. v1 = v0 without the first 30 minutes of tank drainage |
+
+The official files are Excel. The scripts can read `.xlsx` directly, but each read takes
+minutes, so convert once to CSV:
+
+```bash
+python convert_to_csv.py data/SWaT_Dataset_Attack_v0.xlsx data/attack.csv
+python convert_to_csv.py data/SWaT_Dataset_Normal_v1.xlsx data/normal.csv
+# if you only have Normal v0, drop the 30-minute drainage period yourself:
+python convert_to_csv.py data/SWaT_Dataset_Normal_v0.xlsx data/normal.csv --drop-first 1800
 ```
-data/
-  attack.csv    # used for all experiments (the base paper's attack file)
-  normal.csv    # normal operation, kept for later residual features
-```
 
-Do not use `merged.csv`: joining normal and attack data changes the timeline, so the
-temporal blocks no longer match the base paper's protocol.
-
-**Current source:** a public Kaggle re-upload of the December 2015 SWaT release. Record its
-URL, uploader and download date for the paper. When the official iTrust files arrive, copy
-the attack file to `data/attack.csv` (or pass its path with `--attack-csv`), rerun every
-step, and replace the numbers.
+The loader also handles tab-separated text, Latin-1 encoding and an extra title row
+above the header.
 
 `data/` and `.venv/` are listed in `.gitignore`. SWaT must not be redistributed, so never
 push the data to GitHub.
@@ -65,7 +78,8 @@ python check_data.py
 
 The base paper reports **449,919 rows, 54,621 attack rows and 51 variables** for the attack
 file, with timestamps starting on 28 December 2015. The script marks each value OK or
-DIFFERENT. If anything differs, note it in the paper. If the loader raises an error (for
+DIFFERENT. If anything differs, note it in the paper. You can also check the Excel files directly:
+`python check_data.py --files data/SWaT_Dataset_Attack_v0.xlsx`. If the loader raises an error (for
 example, labels coded as 0/1), adapt `load_swat` in `data.py`.
 
 ## Step 2: reproduce the base paper
@@ -146,6 +160,7 @@ Do the same for the defence settings in `online.Defence` (`filter_margin`, `clip
 | File | Purpose |
 |------|---------|
 | `check_data.py` | compares your SWaT files with the base paper's numbers |
+| `convert_to_csv.py` | one-time Excel → CSV conversion (optionally dropping the first rows) |
 | `data.py` | SWaT loading, attack segments, temporal blocks, folds |
 | `features.py` | raw and improved feature sets, optional workload proxy |
 | `online.py` | closed-loop system, label corruption, defences |
