@@ -5,6 +5,7 @@ It mimics the real file's layout (51 tag names, ' Timestamp', 'Normal/Attack' wi
 Results on this file mean nothing scientifically.
 """
 import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -61,6 +62,7 @@ def main():
     labels[typo] = "A ttack"
     df.insert(0, " Timestamp", pd.date_range("2015-12-28 10:00:00", periods=n, freq="s"))
     df["Normal/Attack"] = labels
+    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(a.out, index=False)
     print(f"Wrote {a.out}: {n} rows, {y.sum()} attack rows in {a.segments} segments")
 

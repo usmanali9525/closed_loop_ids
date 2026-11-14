@@ -16,29 +16,62 @@ It does three things:
 
 ## Setup
 
+Ubuntu blocks system-wide `pip` installs, so use a virtual environment:
+
 ```bash
+cd ~/Documents/GitHub/closed_loop_ids
+sudo apt install python3-venv python3-full   # one-time
+python3 -m venv .venv
+source .venv/bin/activate                    # repeat in every new terminal
+pip install --upgrade pip
 pip install -r requirements.txt
-mkdir -p data   # put SWaT_Dataset_Attack_v0.csv here
 ```
 
-Smoke test without the real data (results are meaningless, it only checks the code runs):
+In VS Code: `Ctrl+Shift+P` → "Python: Select Interpreter" → choose `./.venv`.
+
+## Data
+
+Put the SWaT files in a `data/` folder in the project:
+
+```
+data/
+  attack.csv    # used for all experiments (the base paper's attack file)
+  normal.csv    # normal operation, kept for later residual features
+```
+
+Do not use `merged.csv`: joining normal and attack data changes the timeline, so the
+temporal blocks no longer match the base paper's protocol.
+
+**Current source:** a public Kaggle re-upload of the December 2015 SWaT release. Record its
+URL, uploader and download date for the paper. When the official iTrust files arrive, copy
+the attack file to `data/attack.csv` (or pass its path with `--attack-csv`), rerun every
+step, and replace the numbers.
+
+`data/` and `.venv/` are listed in `.gitignore`. SWaT must not be redistributed, so never
+push the data to GitHub.
+
+Smoke test with fake data (optional, results are meaningless):
 
 ```bash
 python make_synthetic.py
 python run_reproduce.py --attack-csv data/synthetic_swat.csv --reps 1
-python run_poisoning.py --attack-csv data/synthetic_swat.csv --reps 1 --features raw --rates 0.2
 ```
 
 ## Step 1: check the data
 
-The first lines printed by either script describe the file. The base paper reports
-**449,919 rows, 54,621 attack rows, 51 variables**, and a subset of **39,919 rows / 12,952
-attack rows**. If your copy differs (e.g. a Kaggle re-upload), note it in the paper.
+```bash
+python check_data.py
+```
+
+The base paper reports **449,919 rows, 54,621 attack rows and 51 variables** for the attack
+file, with timestamps starting on 28 December 2015. The script marks each value OK or
+DIFFERENT. If anything differs, note it in the paper. If the loader raises an error (for
+example, labels coded as 0/1), adapt `load_swat` in `data.py`.
 
 ## Step 2: reproduce the base paper
 
 ```bash
-python run_reproduce.py --attack-csv data/SWaT_Dataset_Attack_v0.csv
+python run_reproduce.py --attack-csv data/attack.csv
 ```
 
 Targets from the paper: full system F1 ≈ 0.75, fixed-threshold LR ≈ 0.57, batch LR ≈ 0.71,
@@ -51,7 +84,7 @@ Outputs in `results/`: per-fold CSV, summary table (mean ± sd [95% CI]) and pai
 ## Step 3: stronger detector
 
 ```bash
-python run_reproduce.py --attack-csv data/SWaT_Dataset_Attack_v0.csv \
+python run_reproduce.py --attack-csv data/attack.csv \
     --features improved --calibrate --persistence 3,5
 ```
 
@@ -60,7 +93,7 @@ Add one change at a time (features → calibration → persistence) to attribute
 ## Step 4: poisoning study
 
 ```bash
-python run_poisoning.py --attack-csv data/SWaT_Dataset_Attack_v0.csv \
+python run_poisoning.py --attack-csv data/attack.csv \
     --features raw improved --rates 0.05 0.1 0.2 0.3 \
     --defences none filter clip rollback filter+clip
 ```
@@ -100,7 +133,7 @@ labels. With the default `eta0 = 0.01` updates may be very small. Pick them on a
 subset** that you do not report, e.g.
 
 ```bash
-python run_reproduce.py --attack-csv data/SWaT_Dataset_Attack_v0.csv \
+python run_reproduce.py --attack-csv data/attack.csv \
     --block-selection random --block-seed 99 --reps 1 --skip-baselines --eta0 0.05
 ```
 
@@ -112,6 +145,7 @@ Do the same for the defence settings in `online.Defence` (`filter_margin`, `clip
 
 | File | Purpose |
 |------|---------|
+| `check_data.py` | compares your SWaT files with the base paper's numbers |
 | `data.py` | SWaT loading, attack segments, temporal blocks, folds |
 | `features.py` | raw and improved feature sets, optional workload proxy |
 | `online.py` | closed-loop system, label corruption, defences |
