@@ -143,15 +143,16 @@ you used.
 ## Tuning without leaking
 
 `eta0` and `update_epochs` control how much the online model learns from each batch of 16
-labels. With the default `eta0 = 0.01` updates may be very small. Pick them on a **pilot
-subset** that you do not report, e.g.
+labels. With the default `eta0 = 0.01` the updates on SWaT are almost zero, so incremental
+learning appears useless. Pick them on a **pilot subset** that you do not report:
 
 ```bash
-python run_reproduce.py --attack-csv data/attack.csv \
-    --block-selection random --block-seed 99 --reps 1 --skip-baselines --eta0 0.05
+python tune_online.py --attack-csv data/attack.csv --block-selection random --block-seed 99
 ```
 
-Try a few values (0.01, 0.05, 0.1; 1–3 epochs), fix one, then run the real experiments.
+It prints, for each setting, the F1 with and without updates and the mean relative weight
+change per update. Fix one setting, then pass it to every reported run
+(`--eta0 ... --update-epochs ...`).
 Do the same for the defence settings in `online.Defence` (`filter_margin`, `clip_rel`,
 `rollback_tol`).
 
@@ -168,6 +169,7 @@ Do the same for the defence settings in `online.Defence` (`filter_margin`, `clip
 | `evaluation.py` | metrics, persistence, summaries, statistical tests |
 | `run_reproduce.py` | Exp. 9 ablation + Exp. 10 baselines |
 | `run_poisoning.py` | poisoning × defence grid |
+| `tune_online.py` | pilot tuning of the online step size and epochs |
 | `make_synthetic.py` | synthetic SWaT-like file for smoke tests |
 
 ## Next steps (not yet implemented)

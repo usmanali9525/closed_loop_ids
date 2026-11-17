@@ -63,23 +63,31 @@ class Corruption:
 @dataclass(frozen=True)
 class Defence:
     names: tuple = ()              # any of: filter, clip, rollback
-    filter_margin: float = 0.9
-    clip_rel: float = 0.1
-    rollback_tol: float = 0.02      # max allowed drop in warm-up-set F1 per update
+    filter_margin: float = 0.9     # drop a label if the model gives the opposite class >= this
+    clip_rel: float = 0.1          # max weight change per update, relative to the weight norm
+    rollback_tol: float = 0.02     # max allowed drop in warm-up-set F1 per update
+    spec: str = "none"
 
-    VALID = ("filter", "clip", "rollback")
+    PARAM = {"filter": "filter_margin", "clip": "clip_rel", "rollback": "rollback_tol"}
 
     @classmethod
     def parse(cls, spec: str) -> "Defence":
-        names = () if spec in ("", "none") else tuple(spec.split("+"))
-        bad = set(names) - set(cls.VALID)
-        if bad:
-            raise ValueError(f"Unknown defence(s): {bad}")
-        return cls(names=names)
+        """Parse e.g. 'none', 'filter', 'clip@0.05', 'filter@0.99+rollback@0.1'."""
+        if spec in ("", "none"):
+            return cls()
+        names, params = [], {}
+        for token in spec.split("+"):
+            name, _, value = token.partition("@")
+            if name not in cls.PARAM:
+                raise ValueError(f"Unknown defence '{name}' in '{spec}'")
+            names.append(name)
+            if value:
+                params[cls.PARAM[name]] = float(value)
+        return cls(names=tuple(names), spec=spec, **params)
 
     @property
     def label(self) -> str:
-        return "+".join(self.names) if self.names else "none"
+        return self.spec
 
 
 class Profiler:
@@ -227,6 +235,7 @@ def run_closed_loop(Xtr, ytr, Xte, yte, cfg: LoopConfig, *, seed: int,
     per_update = cfg.label_budget // cfg.n_updates
     log = {"n_corrupted": 0, "n_filtered": 0, "n_clipped": 0, "n_rollbacks": 0,
            "n_labels_used": 0}
+    rel_updates = []   # diagnostic: relative weight change per update
 
     for chunk in np.array_split(np.arange(n), cfg.n_updates):
         if len(chunk) == 0:
@@ -284,6 +293,7 @@ def run_closed_loop(Xtr, ytr, Xte, yte, cfg: LoopConfig, *, seed: int,
                 log["n_rollbacks"] += 1
                 continue
         log["n_labels_used"] += int(keep.sum())
+        rel_updates.append(np.linalg.norm(_get_w(model) - w_old) / max(np.linalg.norm(w_old), 1e-12))
 
     final_pred = apply_persistence(pred, block_te, *persistence) if persistence else pred
     ev = ~queried
@@ -291,6 +301,7 @@ def run_closed_loop(Xtr, ytr, Xte, yte, cfg: LoopConfig, *, seed: int,
     res.update(log)
     res["n_eval"] = int(ev.sum())
     res["mean_tau"] = float(tau_all.mean())
+    res["mean_rel_update"] = float(np.mean(rel_updates)) if rel_updates else 0.0
     if corruption.target_ids:
         is_target = np.isin(attack_id_te, corruption.target_ids)
         t_mask = ev & (yte == 1) & is_target

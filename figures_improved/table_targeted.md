@@ -1,0 +1,7 @@
+| defence | cases | target recall clean | target recall poisoned | change | p (Wilcoxon) | other attacks recall (poisoned) | overall F1 (poisoned) |
+|---|---|---|---|---|---|---|---|
+| none | 14 | 0.451 | 0.296 | -0.156 | 0.0077 | 0.661 | 0.595 |
+| frozen | 14 | 0.262 | 0.262 | +0.000 | nan | 0.619 | 0.585 |
+| filter@0.99 | 14 | 0.262 | 0.262 | +0.000 | nan | 0.619 | 0.585 |
+| clip@0.02 | 14 | 0.269 | 0.257 | -0.012 | 0.0431 | 0.616 | 0.590 |
+| rollback@0.05 | 14 | 0.281 | 0.239 | -0.042 | 0.1088 | 0.619 | 0.591 |
