@@ -9,8 +9,9 @@ Corruption scenarios (applied only to the labels the analyst returns):
                   Rate 0 gives the clean reference for the same segment.
 
 Defences: none, frozen (no updates at all: the lower reference), filter, clip, rollback,
-with optional parameters and '+' combinations, e.g. filter@0.99, clip@0.05, rollback@0.1,
-filter@0.99+clip@0.05.
+memory (refit on warm-up + all analyst labels so far), trim (memory refit that ignores the
+highest-loss share of analyst labels), with optional parameters and '+' combinations,
+e.g. filter@0.99, clip@0.05, rollback@0.1, trim@0.2.
 
 Example (pilot subset, used to choose defence parameters):
   python run_poisoning.py --attack-csv data/attack.csv --block-selection random \

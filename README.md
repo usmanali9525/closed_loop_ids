@@ -282,6 +282,8 @@ configurations.
 | `filter@m` | skip a label if the model gives the opposite class probability ≥ m |
 | `clip@c` | cap the weight change per update at c × the weight norm |
 | `rollback@t` | undo an update if F1 on the trusted warm-up set drops by more than t |
+| `memory` | instead of one SGD step, refit on the trusted warm-up set plus every analyst label received so far |
+| `trim@q` | proposed: memory refit that ignores the share q of analyst labels the model finds hardest to explain (highest loss), then refits; warm-up labels are never dropped |
 
 Combinations use `+`, e.g. `filter@0.99+clip@0.02`.
 

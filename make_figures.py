@@ -23,12 +23,14 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-ORDER = ["none", "frozen", "filter", "clip", "rollback"]
+ORDER = ["none", "frozen", "filter", "clip", "rollback", "memory", "trim"]
 NAMES = {"none": "No defence", "frozen": "Frozen (no updates)", "filter": "Filter",
-         "clip": "Clip", "rollback": "Rollback"}
+         "clip": "Clip", "rollback": "Rollback", "memory": "Memory refit",
+         "trim": "Trimmed memory refit"}
 STYLE = {"none": dict(color="#c0392b", marker="o"), "frozen": dict(color="#7f8c8d", ls="--"),
          "filter": dict(color="#2980b9", marker="s"), "clip": dict(color="#8e44ad", marker="^"),
-         "rollback": dict(color="#27ae60", marker="D")}
+         "rollback": dict(color="#27ae60", marker="D"), "memory": dict(color="#e67e22", marker="v"),
+         "trim": dict(color="#16a085", marker="P", lw=2.2)}
 
 
 def family(defence: str) -> str:

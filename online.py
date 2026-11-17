@@ -62,13 +62,15 @@ class Corruption:
 
 @dataclass(frozen=True)
 class Defence:
-    names: tuple = ()              # any of: filter, clip, rollback
+    names: tuple = ()              # any of: filter, clip, rollback, memory, trim
     filter_margin: float = 0.9     # drop a label if the model gives the opposite class >= this
     clip_rel: float = 0.1          # max weight change per update, relative to the weight norm
     rollback_tol: float = 0.02     # max allowed drop in warm-up-set F1 per update
+    trim_frac: float = 0.2         # share of highest-loss analyst labels ignored at each refit
     spec: str = "none"
 
-    PARAM = {"filter": "filter_margin", "clip": "clip_rel", "rollback": "rollback_tol"}
+    PARAM = {"filter": "filter_margin", "clip": "clip_rel", "rollback": "rollback_tol",
+             "memory": None, "trim": "trim_frac"}
 
     @classmethod
     def parse(cls, spec: str) -> "Defence":
@@ -82,6 +84,8 @@ class Defence:
                 raise ValueError(f"Unknown defence '{name}' in '{spec}'")
             names.append(name)
             if value:
+                if cls.PARAM[name] is None:
+                    raise ValueError(f"'{name}' takes no parameter")
                 params[cls.PARAM[name]] = float(value)
         return cls(names=tuple(names), spec=spec, **params)
 
@@ -201,6 +205,32 @@ def _anchor_f1(m, X, y, tau: float) -> float:
     return f1_score(y, (m.predict_proba(X)[:, 1] >= tau).astype(int), zero_division=0)
 
 
+def _fit_batch(X, y, cfg: LoopConfig, seed: int) -> SGDClassifier:
+    """Same learner as the warm-up (batch) phase."""
+    m = SGDClassifier(loss="log_loss", penalty="l1", alpha=cfg.sgd_alpha, max_iter=1000,
+                      tol=1e-3, learning_rate="optimal", average=True, random_state=seed)
+    return m.fit(X, y)
+
+
+def refit_with_memory(Xw, yw, MX, My, cfg: LoopConfig, seed: int, trim_frac: float):
+    """Robust memory refit.
+
+    Refit the detector on the trusted warm-up set plus every analyst label received so far.
+    With trim_frac > 0, fit once, drop the trim_frac share of analyst labels the fitted model
+    finds hardest to explain (highest log loss: most likely wrong), and refit. Warm-up labels
+    are trusted and never dropped. Returns (weights, number of labels dropped).
+    """
+    X, y = np.vstack([Xw, MX]), np.concatenate([yw, My])
+    m = _fit_batch(X, y, cfg, seed)
+    n_drop = int(np.floor(trim_frac * len(My)))
+    if n_drop:
+        p = np.clip(m.predict_proba(MX)[:, 1], 1e-7, 1 - 1e-7)
+        loss = -(My * np.log(p) + (1 - My) * np.log(1 - p))
+        keep = np.argsort(loss)[: len(My) - n_drop]
+        m = _fit_batch(np.vstack([Xw, MX[keep]]), np.concatenate([yw, My[keep]]), cfg, seed)
+    return _get_w(m), n_drop
+
+
 def run_closed_loop(Xtr, ytr, Xte, yte, cfg: LoopConfig, *, seed: int,
                     attack_id_te=None, block_te=None, workload_te=None,
                     corruption: Corruption = Corruption(),
@@ -236,6 +266,10 @@ def run_closed_loop(Xtr, ytr, Xte, yte, cfg: LoopConfig, *, seed: int,
     log = {"n_corrupted": 0, "n_filtered": 0, "n_clipped": 0, "n_rollbacks": 0,
            "n_labels_used": 0}
     rel_updates = []   # diagnostic: relative weight change per update
+    memory_mode = any(n in ("memory", "trim") for n in defence.names)
+    mem_X, mem_y = [], []
+    if memory_mode:
+        log["n_trimmed"] = 0
 
     for chunk in np.array_split(np.arange(n), cfg.n_updates):
         if len(chunk) == 0:
@@ -274,6 +308,18 @@ def run_closed_loop(Xtr, ytr, Xte, yte, cfg: LoopConfig, *, seed: int,
                      ((y_given == 1) & (pq <= 1 - defence.filter_margin)))
             log["n_filtered"] += int((~keep).sum())
         if not keep.any():
+            continue
+
+        if memory_mode:   # refit on warm-up + all analyst labels so far (optionally trimmed)
+            w_old = _get_w(model)
+            mem_X.append(Xte_s[q][keep]); mem_y.append(y_given[keep])
+            MX, My = np.vstack(mem_X), np.concatenate(mem_y)
+            trim = defence.trim_frac if "trim" in defence.names else 0.0
+            w_new, n_drop = refit_with_memory(Xw, yw, MX, My, cfg, seed, trim)
+            _set_w(model, w_new)
+            log["n_trimmed"] = n_drop
+            log["n_labels_used"] = len(My) - n_drop
+            rel_updates.append(np.linalg.norm(w_new - w_old) / max(np.linalg.norm(w_old), 1e-12))
             continue
 
         w_old = _get_w(model)
