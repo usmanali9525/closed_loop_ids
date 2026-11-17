@@ -30,41 +30,63 @@ Technology, Lahore, Pakistan
    labelled "normal") and targeted poisoning of one attack segment.
 3. **Tests three lightweight defences** (filter, clip, rollback) against two references:
    no defence, and a frozen model that never learns.
-4. **Repeats everything with a second feature set** (causal temporal features) as a
+4. **Proposes and tests a different update rule**, memory refit: instead of one SGD step on
+   each batch of 16 labels, retrain on the trusted warm-up data plus every analyst label so
+   far. A trimmed variant ignores the labels the model finds hardest to explain.
+5. **Repeats everything with a second feature set** (causal temporal features) as a
    robustness check.
 
 ## Main findings
 
 Raw features, 25 matched folds, mean F1. Frozen = the same model with no updates.
 
-| Analyst labels | No defence | Frozen | Filter | Clip | Rollback |
-|---|---|---|---|---|---|
-| Clean | **0.648** | 0.633 | 0.647 | 0.646 | 0.647 |
-| 5% random errors | 0.591 | 0.633 | 0.643 | 0.640 | 0.656 |
-| 10% random errors | 0.585 | 0.633 | 0.645 | 0.625 | 0.635 |
-| 30% random errors | 0.485 | 0.633 | 0.639 | 0.603 | 0.632 |
-| 5% missed attacks | 0.611 | 0.633 | 0.647 | 0.642 | 0.643 |
-| 30% missed attacks | 0.541 | 0.633 | 0.642 | 0.635 | 0.630 |
+| Analyst labels | No defence | Frozen | Filter | Clip | Rollback | **Memory refit** | Trimmed (0.1) |
+|---|---|---|---|---|---|---|---|
+| Clean | 0.648 | 0.633 | 0.647 | 0.646 | 0.647 | **0.695** | 0.657 |
+| 5% random errors | 0.591 | 0.633 | 0.643 | 0.639 | 0.656 | **0.689** | 0.676 |
+| 10% random errors | 0.585 | 0.633 | 0.645 | 0.625 | 0.635 | **0.672** | 0.669 |
+| 20% random errors | 0.537 | 0.633 | 0.639 | 0.609 | 0.618 | 0.649 | **0.661** |
+| 30% random errors | 0.485 | 0.633 | **0.639** | 0.603 | 0.632 | 0.632 | 0.634 |
+| 5% missed attacks | 0.611 | 0.633 | 0.647 | 0.642 | 0.643 | **0.694** | 0.657 |
+| 10% missed attacks | 0.609 | 0.633 | 0.645 | 0.639 | 0.653 | **0.693** | 0.655 |
+| 20% missed attacks | 0.576 | 0.633 | 0.642 | 0.634 | 0.636 | **0.681** | 0.660 |
+| 30% missed attacks | 0.541 | 0.633 | 0.642 | 0.634 | 0.630 | **0.667** | 0.654 |
 
-1. **Feedback is fragile.** Clean labels add about +0.015 F1. With 5% wrong labels the loop
-   falls below the frozen model on average, and the loss grows with the error rate. From
-   10–20% errors the loss is significant under the Wilcoxon test (Holm-corrected).
+1. **The original feedback loop is fragile.** Clean labels add about +0.015 F1 over the
+   frozen model. With 5% wrong labels the loop falls below the frozen model on average, and
+   the loss grows with the error rate (0.648 → 0.485 at 30% random errors).
 2. **Error types fail differently.** Random errors double the false-alarm rate (0.14 → 0.31
    at 30%); missed-attack errors lower detection (recall 0.67 → 0.53 at 30%).
-3. **Defences keep the detector near the frozen level**, mainly by limiting learning. The
-   filter discards the corrections the model disputes, which are the ones that carry the
-   learning signal. Rollback regulates itself: it learns from 207 of 256 labels when they are
-   clean, 145 at 5% errors, 109 at 10% and 76 at 30%.
-4. **Targeted poisoning is stealthy.** Poisoning one attack segment lowers its recall from
-   0.31 to 0.22, while recall on other attacks (0.71) and overall F1 (0.64) do not change.
-   Monitoring overall accuracy alone would not reveal it.
-5. **Robust across feature sets.** The improved features show the same pattern (clean 0.614,
-   frozen 0.604, 5% random errors 0.577, targeted recall 0.23 → 0.15).
+3. **Standard defences protect by limiting learning.** Filter, clip and rollback keep the
+   detector near the frozen level. The filter discards the corrections the model disputes,
+   which are the ones that carry the learning signal; rollback learns from fewer labels as
+   quality drops (207 of 256 when clean, 76 at 30% random errors).
+4. **The fragility comes from the update rule.** Memory refit retrains on the trusted
+   warm-up data plus all analyst labels, so a few wrong labels are outvoted. With the raw
+   features it quadruples the benefit of clean feedback (+0.062 over frozen instead of
+   +0.015), lowers false alarms (0.145 → 0.092), stays at or above the original system's
+   clean F1 up to 20% random errors and 30% missed attacks, and never fell below the frozen
+   model in any tested scenario. Trimming helps only at high random-error rates and costs
+   elsewhere, because it also discards correct labels.
+5. **Its advantage shrinks with many features.** With the 353 engineered features (at most
+   512 training examples per refit), memory refit is still well above the undefended loop
+   and stays flat under missed-attack errors (0.617–0.618), but its clean benefit is smaller
+   (+0.024 over frozen) and under random errors it falls slightly below frozen from 10%
+   (0.575 vs 0.604 at 30%).
+6. **Targeted poisoning is stealthy and unsolved.** Paired per segment and fold, on attacks
+   the undefended system detects when clean (17 cases): poisoning one attack lowers its
+   recall from 0.53 to 0.38 without defence and from 0.58 to 0.41 with memory refit
+   (Wilcoxon, Holm-adjusted p ≈ 0.03), while recall on other attacks (0.68–0.71) and overall
+   F1 (0.65–0.66) do not drop. Defences that barely learn keep the target near the frozen
+   level (about 0.42) but lose the general benefit of feedback. No tested method combines
+   both. The improved features show the same pattern (14 cases: 0.45 → 0.30 without defence,
+   0.43 → 0.27 with memory refit).
 
 Statistics: Wilcoxon signed-rank and the Nadeau–Bengio corrected resampled t-test, both
-Holm-adjusted. Fold-to-fold variation is large (F1 standard deviation about 0.2), so most
-differences that pass the Wilcoxon test do not pass the stricter corrected test. Both are
-reported.
+Holm-adjusted. Memory refit beats no defence in every clean, random-error and missed-attack
+scenario under Wilcoxon (raw features, p ≤ 0.011). Fold-to-fold variation is large (F1
+standard deviation about 0.2), so most of these differences do not pass the stricter
+corrected test. Both are reported.
 
 ### Reproduction of the base paper
 
@@ -213,27 +235,46 @@ setting.
 | rollback@0.05 / rollback@0.1 | 0.755 / 0.749 | `rollback@0.05` |
 | (none / frozen) | 0.727 / 0.749 | references |
 
-### Step 4: main experiments (about 15 min each)
+Memory refit and its trimmed variant were then compared on the same pilot subset
+(two repetitions, 10 folds):
 
 ```
-python run_poisoning.py --attack-csv data/attack.csv --features raw --eta0 2 --defences none frozen filter@0.99 clip@0.02 rollback@0.05 --out results
-python run_poisoning.py --attack-csv data/attack.csv --features improved --eta0 1 --defences none frozen filter@0.99 clip@0.02 rollback@0.05 --out results_improved
+python run_poisoning.py --attack-csv data/attack.csv --block-selection random --block-seed 99 --reps 2 --features raw --rates 0.1 0.3 --defences none frozen rollback@0.05 memory trim@0.1 trim@0.2 trim@0.3 --out results_pilot_solution
+```
+
+| Variant | Mean F1 (pilot) |
+|---|---|
+| memory / trim@0.1 / trim@0.2 / trim@0.3 | 0.768 / 0.767 / 0.732 / 0.722 |
+| (rollback@0.05 / frozen / none) | 0.725 / 0.706 / 0.667 |
+
+Memory refit and trim@0.1 tie; the tie-break picks memory refit. trim@0.1 is kept in the
+main run to show what trimming adds.
+
+Success criteria, fixed before the main run: (1) with clean labels, at least as good as no
+defence; (2) with wrong labels, above frozen and rollback; (3) under targeted poisoning,
+target recall closer to its clean value than without defence. With the raw features memory
+refit meets (1), meets (2) in 7 of 8 scenarios (ties at 30% random errors) and fails (3).
+
+### Step 4: main experiments (20–25 min each)
+
+```
+python run_poisoning.py --attack-csv data/attack.csv --features raw --eta0 2 --defences none frozen filter@0.99 clip@0.02 rollback@0.05 memory trim@0.1 --out results_solution
+python run_poisoning.py --attack-csv data/attack.csv --features improved --eta0 1 --defences none frozen filter@0.99 clip@0.02 rollback@0.05 memory trim@0.1 --out results_solution_improved
 ```
 
 Each run covers 11 scenarios (clean; random errors and missed attacks at 5, 10, 20 and 30%;
-targeted poisoning with its clean reference) × 5 defences × 25 folds. Defence parameters
-were chosen with the raw features and reused for the improved features.
+targeted poisoning with its clean reference) × 7 defences × 25 folds. Defence parameters
+were chosen with the raw features and reused for the improved features. The online step
+size only affects the SGD-based configurations; memory refit uses the warm-up learner.
 
-> If your `results/poisoning_folds.csv` comes from an earlier run with
-> `--features raw improved --eta0 2`, its improved-feature rows are superseded by
-> `results_improved/`. `make_figures.py` selects one feature set at a time, so this does not
-> affect the figures.
+With the improved features a few memory refits stop at the iteration limit
+(`ConvergenceWarning`); this affects a handful of fits only.
 
 ### Step 5: figures and tables
 
 ```
-python make_figures.py --folds results/poisoning_folds.csv --features raw --out figures_raw
-python make_figures.py --folds results_improved/poisoning_folds.csv --features improved --out figures_improved
+python make_figures.py --folds results_solution/poisoning_folds.csv --features raw --out figures_final_raw
+python make_figures.py --folds results_solution_improved/poisoning_folds.csv --features improved --out figures_final_improved
 ```
 
 | Output | Content |
@@ -310,12 +351,15 @@ behavioural profiling and removing context thresholding give identical results.
 ## Limitations
 
 - One dataset (SWaT, December 2015) and one evaluation subset; results vary strongly between
-  folds.
+  folds, and the targeted analysis rests on 17 (raw) and 14 (improved) segment-fold cases.
 - Label corruption is simulated; no real analyst or adaptive attacker is involved.
 - The base system is a re-implementation and some details are assumptions (A1–A10).
 - Defence parameters were tuned on the raw features and reused for the improved features.
-- Clean feedback gives only a small gain on this subset, which limits how much any defence
-  can recover.
+- Memory refit's robustness depends on having enough labels relative to the number of
+  features; with 353 features it degrades under random errors.
+- Memory refit keeps every analyst label; with a longer stream or concept drift, a bounded
+  or time-weighted memory would be needed. This was not tested.
+- Consistent targeted poisoning is not mitigated by any tested method.
 
 ## Citation
 
